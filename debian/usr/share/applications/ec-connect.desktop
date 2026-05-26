@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=EasyConnect VPN
+Name[zh_CN]=EasyConnect VPN 连接
+Comment=Connect to VPN via EasyConnect
+Comment[zh_CN]=通过 EasyConnect 连接 VPN
+Exec=ec-connect
+Icon=network-vpn
+Terminal=false
+Type=Application
+Categories=Network;
+StartupNotify=true
+Keywords=vpn;easyconnect;proxy;网络;代理;

@@ -1,0 +1,10 @@
+#!/bin/bash
+# Pre-remove script
+set -e
+
+# 停止正在运行的容器
+docker rm -f ec-vpn 2>/dev/null || true
+
+echo "EasyConnect VPN Launcher 已卸载。"
+echo "Docker 镜像未被删除，如需清理请运行："
+echo "  docker rmi hagb/docker-easyconnect:cli"

@@ -1,0 +1,15 @@
+Package: ec-connect
+Version: 1.0.0
+Section: net
+Priority: optional
+Architecture: amd64
+Depends: docker-ce | docker.io, zenity
+Recommends: xclip | xsel
+Maintainer: 厚皮龙 <huang.wenlong@synthoid.ai>
+Homepage: https://github.com/WenlongHuangResearch/easyconnect_linux
+Description: EasyConnect VPN GUI Launcher
+  A user-friendly graphical launcher for Sangfor EasyConnect VPN,
+  running in Docker with socks5 and HTTP proxy support.
+  .
+  基于 Docker 的深信服 EasyConnect VPN 图形化启动器。
+  支持 Zenity 弹窗交互登录，自动提供 socks5 和 HTTP 代理。

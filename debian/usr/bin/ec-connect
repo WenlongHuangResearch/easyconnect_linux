@@ -1,0 +1,220 @@
+#!/bin/bash
+# ============================================================
+#  EasyConnect VPN 连接工具
+#  使用 Zenity 弹窗交互，Docker 运行深信服 EasyConnect
+#  Author: 厚皮龙 + 巴斯特
+# ============================================================
+
+set -e
+
+APP_NAME="EasyConnect VPN"
+ICON_NAME="network-vpn"
+EC_IMAGE="hagb/docker-easyconnect:cli"
+EC_VERSION="7.6.3"
+
+# ── 检查依赖 ──────────────────────────────────────────────
+check_deps() {
+    if ! command -v docker &>/dev/null; then
+        zenity --error --title="$APP_NAME" \
+            --text="未安装 Docker！\n请先安装：sudo apt install docker.io" \
+            --width=400
+        exit 1
+    fi
+    if ! docker info &>/dev/null; then
+        # 尝试 sudo
+        DOCKER_CMD="sudo docker"
+        if ! sudo docker info &>/dev/null 2>&1; then
+            zenity --error --title="$APP_NAME" \
+                --text="Docker 无法运行！\n请确保 Docker 服务已启动且当前用户有权限。\n\n提示：sudo usermod -aG docker \$USER" \
+                --width=450
+            exit 1
+        fi
+    else
+        DOCKER_CMD="docker"
+    fi
+}
+
+# ── 收集登录信息 ──────────────────────────────────────────
+get_credentials() {
+    # 服务器地址
+    SERVER=$(zenity --entry \
+        --title="$APP_NAME — 服务器地址" \
+        --text="请输入 VPN 服务器地址：" \
+        --entry-text="vpn1.sit.edu.cn" \
+        --width=420 2>/dev/null) || exit 0
+
+    [ -z "$SERVER" ] && exit 0
+
+    # 用户名
+    USERNAME=$(zenity --entry \
+        --title="$APP_NAME — 用户名" \
+        --text="请输入用户名：" \
+        --entry-text="236091114" \
+        --width=420 2>/dev/null) || exit 0
+
+    [ -z "$USERNAME" ] && exit 0
+
+    # 密码
+    PASSWORD=$(zenity --password \
+        --title="$APP_NAME — 密码" \
+        --text="请输入密码：" \
+        --width=420 2>/dev/null) || exit 0
+
+    [ -z "$PASSWORD" ] && exit 0
+}
+
+# ── 检查镜像 ──────────────────────────────────────────────
+ensure_image() {
+    if ! $DOCKER_CMD image inspect "$EC_IMAGE" &>/dev/null; then
+        zenity --info --title="$APP_NAME" \
+            --text="首次使用，正在下载 EasyConnect 镜像...\n请稍候。" \
+            --width=400 --timeout=3 2>/dev/null &
+        $DOCKER_CMD pull "$EC_IMAGE" 2>&1 | \
+            zenity --progress --title="$APP_NAME" \
+                --text="下载 EasyConnect 镜像中..." \
+                --pulsate --auto-close --no-cancel --width=400 2>/dev/null
+    fi
+}
+
+# ── 连接 VPN ──────────────────────────────────────────────
+connect_vpn() {
+    # 杀掉旧容器（如果存在）
+    $DOCKER_CMD rm -f ec-vpn 2>/dev/null || true
+
+    # 弹窗：正在连接
+    (
+        echo "10" ; sleep 0.5
+        echo "# 启动 EasyConnect 容器..." ; sleep 0.5
+        echo "50"
+        echo "# 正在连接 $SERVER ..."
+
+        # 启动容器
+        $DOCKER_CMD run --rm \
+            --name ec-vpn \
+            --device /dev/net/tun \
+            --cap-add NET_ADMIN \
+            -p 127.0.0.1:1080:1080 \
+            -p 127.0.0.1:8888:8888 \
+            -e EC_VER="$EC_VERSION" \
+            -e CLI_OPTS="-d ${SERVER} -u ${USERNAME} -p ${PASSWORD}" \
+            "$EC_IMAGE" > /tmp/ec-connect.log 2>&1 &
+        
+        CONTAINER_PID=$!
+        
+        # 等待代理就绪（最多等30秒）
+        for i in $(seq 1 30); do
+            if curl -s --max-time 2 --socks5 127.0.0.1:1080 https://www.baidu.com &>/dev/null; then
+                echo "100"
+                echo "# ✅ 连接成功！"
+                sleep 1
+                break
+            fi
+            
+            # 检查容器是否还活着
+            if ! kill -0 $CONTAINER_PID 2>/dev/null; then
+                echo "100"
+                echo "# ❌ 连接失败，请检查用户名密码或服务器地址"
+                sleep 2
+                return 1
+            fi
+            
+            PROGRESS=$((10 + i * 3))
+            [ $PROGRESS -gt 90 ] && PROGRESS=90
+            echo "$PROGRESS"
+            echo "# 等待连接... (${i}s)"
+            sleep 1
+        done
+        
+        echo "100"
+        echo "# 完成"
+    ) | zenity --progress \
+        --title="$APP_NAME — 正在连接" \
+        --text="初始化..." \
+        --percentage=0 \
+        --auto-close \
+        --width=420 2>/dev/null
+
+    # 检查是否连上
+    if curl -s --max-time 3 --socks5 127.0.0.1:1080 https://www.baidu.com &>/dev/null; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# ── 已连接状态窗口 ────────────────────────────────────────
+show_connected() {
+    while true; do
+        # 检查容器是否还在运行
+        if ! $DOCKER_CMD ps --format '{{.Names}}' 2>/dev/null | grep -q 'ec-vpn'; then
+            zenity --error --title="$APP_NAME" \
+                --text="VPN 连接已断开！\n\n查看日志：/tmp/ec-connect.log" \
+                --width=400
+            exit 1
+        fi
+
+        # 获取当前时间和 IP
+        EXTERNAL_IP=$(curl -s --max-time 5 --socks5 127.0.0.1:1080 https://ifconfig.me 2>/dev/null || echo "获取中...")
+        
+        CHOICE=$(zenity --list \
+            --title="$APP_NAME — 已连接" \
+            --text="✅ VPN 已连接\n\n服务器：$SERVER\n用户：$USERNAME\n出口 IP：$EXTERNAL_IP\n\n代理端口：\n  Socks5 → 127.0.0.1:1080\n  HTTP   → 127.0.0.1:8888" \
+            --column="操作" \
+            "🔄 刷新状态" \
+            "📋 复制代理地址" \
+            "📝 查看日志" \
+            "❌ 断开连接" \
+            --width=480 --height=380 2>/dev/null) || break
+
+        case "$CHOICE" in
+            "📋 复制代理地址")
+                echo "socks5://127.0.0.1:1080" | xclip -selection clipboard 2>/dev/null || \
+                echo "socks5://127.0.0.1:1080" | xsel -ib 2>/dev/null || true
+                zenity --info --title="$APP_NAME" \
+                    --text="已复制到剪贴板：\nsocks5://127.0.0.1:1080" \
+                    --width=350 --timeout=2 2>/dev/null
+                ;;
+            "📝 查看日志")
+                if [ -f /tmp/ec-connect.log ]; then
+                    zenity --text-info --title="$APP_NAME — 日志" \
+                        --filename=/tmp/ec-connect.log \
+                        --width=600 --height=400 2>/dev/null
+                else
+                    zenity --info --title="$APP_NAME" --text="暂无日志" --width=300
+                fi
+                ;;
+            "❌ 断开连接")
+                $DOCKER_CMD rm -f ec-vpn 2>/dev/null
+                zenity --info --title="$APP_NAME" \
+                    --text="VPN 已断开连接" \
+                    --width=300 --timeout=2 2>/dev/null
+                exit 0
+                ;;
+            "🔄 刷新状态")
+                continue
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
+}
+
+# ── 主流程 ────────────────────────────────────────────────
+main() {
+    check_deps
+    get_credentials
+    ensure_image
+    
+    if connect_vpn; then
+        show_connected
+    else
+        zenity --error --title="$APP_NAME" \
+            --text="❌ 连接失败！\n\n可能原因：\n1. 用户名或密码错误\n2. 服务器地址不正确\n3. 网络不可达\n\n详情日志：/tmp/ec-connect.log" \
+            --width=420
+        $DOCKER_CMD rm -f ec-vpn 2>/dev/null || true
+        exit 1
+    fi
+}
+
+main "$@"
