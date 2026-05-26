@@ -21,11 +21,14 @@ check_deps() {
         exit 1
     fi
     if ! docker info &>/dev/null; then
-        # 尝试 sudo
-        DOCKER_CMD="sudo docker"
-        if ! sudo docker info &>/dev/null 2>&1; then
+        # 尝试 pkexec (GUI 密码弹窗)，再试 sudo
+        if pkexec docker info &>/dev/null 2>&1; then
+            DOCKER_CMD="pkexec docker"
+        elif sudo -n docker info &>/dev/null 2>&1; then
+            DOCKER_CMD="sudo docker"
+        else
             zenity --error --title="$APP_NAME" \
-                --text="Docker 无法运行！\n请确保 Docker 服务已启动且当前用户有权限。\n\n提示：sudo usermod -aG docker \$USER" \
+                --text="Docker 无法运行！\n\n请先注销重新登录（已加入 docker 组），\n或手动运行：\n  newgrp docker" \
                 --width=450
             exit 1
         fi
