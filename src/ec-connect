@@ -84,55 +84,49 @@ connect_vpn() {
     # 杀掉旧容器（如果存在）
     $DOCKER_CMD rm -f ec-vpn 2>/dev/null || true
 
-    # 弹窗：正在连接
-    (
-        echo "10" ; sleep 0.5
-        echo "# 启动 EasyConnect 容器..." ; sleep 0.5
-        echo "50"
-        echo "# 正在连接 $SERVER ..."
+    # 先启动 docker 容器（不在管道内，权限弹窗正常弹出）
+    $DOCKER_CMD run --rm \
+        --name ec-vpn \
+        --device /dev/net/tun \
+        --cap-add NET_ADMIN \
+        -p 127.0.0.1:1080:1080 \
+        -p 127.0.0.1:8888:8888 \
+        -e EC_VER="$EC_VERSION" \
+        -e CLI_OPTS="-d ${SERVER} -u ${USERNAME} -p ${PASSWORD}" \
+        "$EC_IMAGE" > /tmp/ec-connect.log 2>&1 &
+    CONTAINER_PID=$!
 
-        # 启动容器
-        $DOCKER_CMD run --rm \
-            --name ec-vpn \
-            --device /dev/net/tun \
-            --cap-add NET_ADMIN \
-            -p 127.0.0.1:1080:1080 \
-            -p 127.0.0.1:8888:8888 \
-            -e EC_VER="$EC_VERSION" \
-            -e CLI_OPTS="-d ${SERVER} -u ${USERNAME} -p ${PASSWORD}" \
-            "$EC_IMAGE" > /tmp/ec-connect.log 2>&1 &
-        
-        CONTAINER_PID=$!
-        
-        # 等待代理就绪（最多等30秒）
+    # 管道只监控进度，不执行 docker 命令
+    (
         for i in $(seq 1 30); do
+            PROGRESS=$((5 + i * 3))
+            [ $PROGRESS -gt 95 ] && PROGRESS=95
+            echo "$PROGRESS"
+            echo "# 正在连接 ${SERVER} ... (${i}s)"
+
+            # 代理通了？
             if curl -s --max-time 2 --socks5 127.0.0.1:1080 https://www.baidu.com &>/dev/null; then
                 echo "100"
                 echo "# ✅ 连接成功！"
                 sleep 1
                 break
             fi
-            
-            # 检查容器是否还活着
+
+            # 容器死了？
             if ! kill -0 $CONTAINER_PID 2>/dev/null; then
                 echo "100"
-                echo "# ❌ 连接失败，请检查用户名密码或服务器地址"
+                echo "# ❌ 连接失败，请检查凭据或服务器"
                 sleep 2
                 return 1
             fi
-            
-            PROGRESS=$((10 + i * 3))
-            [ $PROGRESS -gt 90 ] && PROGRESS=90
-            echo "$PROGRESS"
-            echo "# 等待连接... (${i}s)"
+
             sleep 1
         done
-        
         echo "100"
         echo "# 完成"
     ) | zenity --progress \
         --title="$APP_NAME — 正在连接" \
-        --text="初始化..." \
+        --text="启动 EasyConnect..." \
         --percentage=0 \
         --auto-close \
         --width=420 2>/dev/null
